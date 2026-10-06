@@ -1,0 +1,25 @@
+[Unit]
+Description=Arbitrage monitoring (%i)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=arbitrage-monitor
+Group=arbitrage-monitor
+WorkingDirectory=/opt/arbitrage-monitor/current
+EnvironmentFile=/etc/arbitrage-monitor/monitoring.env
+Environment=PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ExecStart=/usr/bin/bash scripts/deploy/run-monitoring.bash %i
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=45
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=arbitrage-monitor
+Environment=NAUTILUS_PATH=/var/lib/arbitrage-monitor
+
+[Install]
+WantedBy=multi-user.target

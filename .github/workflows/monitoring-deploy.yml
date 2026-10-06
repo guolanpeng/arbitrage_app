@@ -1,0 +1,82 @@
+name: monitoring deploy
+
+permissions:
+  actions: read
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful monitoring build run ID (from the Actions URL)
+        required: true
+        type: string
+
+concurrency:
+  group: monitoring-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, monitoring-build]
+    timeout-minutes: 15
+    environment: monitoring-production
+    steps:
+      - name: Verify selected build
+        id: build
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BUILD_RUN_ID: ${{ inputs.run_id }}
+        run: |
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$BUILD_RUN_ID" > build.json
+          jq -e '.conclusion == "success" and .head_branch == "main"
+            and .path == ".github/workflows/monitoring-build.yml"
+            and (.event == "push" or .event == "workflow_dispatch")' build.json
+          echo "sha=$(jq -r .head_sha build.json)" >> "$GITHUB_OUTPUT"
+          echo "attempt=$(jq -r .run_attempt build.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy over SSH
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          BUILD_SHA: ${{ steps.build.outputs.sha }}
+          BUILD_RUN_ID: ${{ inputs.run_id }}
+          BUILD_ATTEMPT: ${{ steps.build.outputs.attempt }}
+          LOCAL_RELEASE_ROOT: ${{ runner.tool_cache }}/arbitrage-app/${{ github.repository }}/releases
+        run: |
+          [[ "$DEPLOY_HOST" =~ ^[a-zA-Z0-9.-]+$ ]]
+          [[ "$DEPLOY_USER" =~ ^[a-zA-Z_][a-zA-Z0-9_-]*$ ]]
+          [[ "$BUILD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BUILD_RUN_ID" =~ ^[0-9]+$ ]]
+          [[ "$BUILD_ATTEMPT" =~ ^[0-9]+$ ]]
+          release="$LOCAL_RELEASE_ROOT/$BUILD_SHA-$BUILD_RUN_ID-$BUILD_ATTEMPT"
+          [[ -d "$release" ]] || {
+            echo "Release not found on this runner: $release" >&2
+            exit 1
+          }
+          cd "$release"
+          sha256sum --check release.sha256
+          sha256sum --check monitoring.tar.gz.sha256
+          [[ "$(tar -xOf monitoring.tar.gz REVISION)" == "$BUILD_SHA" ]]
+          ssh_dir=$(mktemp -d "$RUNNER_TEMP/monitoring-ssh.XXXXXX")
+          trap 'rm -f "$ssh_dir/key" "$ssh_dir/known_hosts"; rmdir "$ssh_dir"' EXIT
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$ssh_dir/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$ssh_dir/known_hosts"
+          chmod 600 "$ssh_dir/key" "$ssh_dir/known_hosts"
+          ssh_args=(-i "$ssh_dir/key" -o IdentitiesOnly=yes -o BatchMode=yes
+            -o StrictHostKeyChecking=yes -o "UserKnownHostsFile=$ssh_dir/known_hosts")
+          remote="$DEPLOY_USER@$DEPLOY_HOST"
+          staging=$(ssh "${ssh_args[@]}" "$remote" \
+            "mktemp -d '/tmp/monitoring-$BUILD_SHA-$GITHUB_RUN_ID.XXXXXX'")
+          [[ "$staging" =~ ^/tmp/monitoring-[0-9a-f]{40}-[0-9]+\.[a-zA-Z0-9]+$ ]]
+          scp "${ssh_args[@]}" \
+            monitoring.tar.gz monitoring.tar.gz.sha256 install-monitoring.bash \
+            "$remote:$staging/"
+          ssh "${ssh_args[@]}" "$remote" \
+            "cd '$staging' && sha256sum --check monitoring.tar.gz.sha256 && sudo -n bash \
+            '$staging/install-monitoring.bash' '$staging/monitoring.tar.gz' '$BUILD_SHA-$BUILD_RUN_ID'"

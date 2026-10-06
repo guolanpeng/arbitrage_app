@@ -1,0 +1,78 @@
+name: monitoring build
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      engine_release_dir:
+        description: Absolute saved engine release directory on this runner (blank uses repository variable)
+        required: false
+        type: string
+
+concurrency:
+  group: monitoring-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, x64, monitoring-build]
+    timeout-minutes: 60
+    steps:
+      - name: Checkout application
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+        with:
+          python-version: "3.14.4"
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
+        with:
+          version: "0.12.19"
+          enable-cache: true
+          cache-dependency-glob: |
+            python/uv.lock
+            python/pyproject.toml
+
+      - name: Reuse engine release stored on runner
+        env:
+          ENGINE_RELEASE_DIR: ${{ inputs.engine_release_dir || vars.ENGINE_RELEASE_DIR }}
+        run: |
+          [[ -n "$ENGINE_RELEASE_DIR" && "$ENGINE_RELEASE_DIR" == /* ]] || {
+            echo "Set ENGINE_RELEASE_DIR to an absolute saved engine release directory" >&2
+            exit 2
+          }
+          python scripts/prepare-engine.py --release-dir "$ENGINE_RELEASE_DIR" \
+            --output "$RUNNER_TEMP/arbitrage-engine-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --github-env "$GITHUB_ENV"
+
+      - name: Test and package application without compiling engine
+        run: bash scripts/deploy/build-monitoring.bash
+
+      - name: Save tested application release on runner
+        env:
+          LOCAL_RELEASE_ROOT: ${{ runner.tool_cache }}/arbitrage-app/${{ github.repository }}/releases
+        run: |
+          [[ "$(cat dist/REVISION)" == "$GITHUB_SHA" ]]
+          cd dist/monitoring-release
+          sha256sum --check monitoring.tar.gz.sha256
+          mkdir -p "$LOCAL_RELEASE_ROOT"
+          release="$LOCAL_RELEASE_ROOT/$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          [[ ! -e "$release" ]]
+          staging=$(mktemp -d "$LOCAL_RELEASE_ROOT/.staging.XXXXXX")
+          trap 'rm -f "$staging/monitoring.tar.gz" "$staging/monitoring.tar.gz.sha256" "$staging/install-monitoring.bash" "$staging/release.sha256"; rmdir "$staging"' EXIT
+          cp monitoring.tar.gz monitoring.tar.gz.sha256 install-monitoring.bash "$staging/"
+          (
+            cd "$staging"
+            sha256sum monitoring.tar.gz monitoring.tar.gz.sha256 install-monitoring.bash > release.sha256
+          )
+          mv "$staging" "$release"
+          trap - EXIT
+          echo "Saved tested application release: $release"

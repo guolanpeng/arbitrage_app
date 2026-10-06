@@ -1,0 +1,11 @@
+.env
+*.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+python/.venv/
+engine-wheels/
+dist/
+logs/
+*.log
