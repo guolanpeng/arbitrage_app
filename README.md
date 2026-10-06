@@ -50,5 +50,5 @@ releases retain their own wheels and locks, regardless of later engine publicati
 
 See [deployment guide](scripts/deploy/README.md) to configure runner access, the shared
 wheel directory, and SSH secrets. Workflows are prepared locally; no remote configuration
-or server services were changed. Old application files remain in the engine checkout as
-a transition backup; develop new application changes here.
+or server services were changed by this code cleanup. Duplicate application sources and
+deployment scripts have been removed from the engine checkout; develop application changes here.
