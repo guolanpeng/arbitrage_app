@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "Arbitrage strategies, market collectors, and account monitoring"
 requires-python = ">=3.13,<3.15"
 dependencies = [
+    "nautilus-trader==2.0.0rc6",
     "httpx==0.28.1",
     "redis==8.1.0",
     "psycopg[binary]==3.3.6",
@@ -15,3 +16,13 @@ test = ["pytest==9.1.1"]
 
 [tool.uv]
 package = false
+environments = ["sys_platform == 'win32'"]
+
+[tool.uv.sources]
+nautilus-trader = { index = "engine" }
+
+[[tool.uv.index]]
+name = "engine"
+url = "engine-wheels"
+format = "flat"
+explicit = true

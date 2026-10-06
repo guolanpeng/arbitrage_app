@@ -1,109 +1,101 @@
-# Monitoring deployment
+# Monitoring deployment with uv
 
-Application releases consume an approved prebuilt NautilusTrader wheel. This repository
-never compiles the engine. The initial deployment starts public market data, Binance
-Portfolio Margin monitoring, and portfolio alerts; it does not start trading.
+Application builds consume prebuilt engine wheels and never compile the engine.
+The initial deployment starts market data, Portfolio Margin monitoring, and portfolio
+alerts. It does not start trading.
 
-## Build and deploy through the local runner
+## Shared local wheel index
 
-The application workflows use `[self-hosted, linux, x64, monitoring-build]` on the
-same server holding engine releases. `monitoring build` runs on pushes to `main`
-or manually; `monitoring deploy` runs manually on `main` with a successful application
-build run ID. No wheel or release archive is uploaded to GitHub.
-
-Configure the application's repository variable `ENGINE_RELEASE_DIR` with the absolute
-directory printed by a successful engine **monitoring build**, for example:
-
-```text
-<ENGINE_RUNNER_TOOL_CACHE>/monitoring/<ENGINE_OWNER>/<ENGINE_REPO>/releases/<ENGINE_SHA>-<BUILD_RUN_ID>-<ATTEMPT>
-```
-
-This directory must contain `monitoring.tar.gz`, its `.sha256` file,
-`install-monitoring.bash`, and `release.sha256`. The application verifies those checksums
-and the archived engine revision, extracts only the engine wheel, and verifies its
-version against `engine-version.txt` before installation. The chosen engine revision,
-release directory name, and wheel hash are recorded in the application package's
-`ENGINE.json`. Other old application sources in the engine archive are not reused.
-To update the engine, deliberately select a new successful release directory. For a
-one-off manual build, override it with the `engine_release_dir` workflow input.
-
-A repository-level runner registered to the engine repository cannot also accept
-application jobs merely because its labels match. Register a separate runner service
-for the application on the same server in its own installation/work directory, or allow
-both repositories to use an organization runner. The application runner user needs read
-access to the original engine artifact directory. Both application build and deploy jobs
-must use the same local artifact storage; assign `monitoring-build` only to that server
-unless all matching application runners share storage. The engine runner's tool-cache
-path may differ from the application's: `ENGINE_RELEASE_DIR` always uses the original
-absolute engine release path.
-
-Create the application's `monitoring-production` environment and configure
-`DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, and `DEPLOY_KNOWN_HOSTS` there. Install
-`gh`, `jq`, `ssh`, and `scp` on the application runner. Runtime account credentials
-continue to live on the target server in `/etc/arbitrage-monitor/monitoring.env`.
-
-The application build saves releases at:
-
-```text
-<APP_RUNNER_TOOL_CACHE>/arbitrage-app/<APP_OWNER>/<APP_REPO>/releases/<APP_SHA>-<BUILD_RUN_ID>-<ATTEMPT>
-```
-
-The manual deployment verifies that the selected run succeeded on `main` in this
-application repository, verifies local release hashes, and deploys that exact application
-archive through the existing SSH installer. It never deploys directly from an engine run ID.
-
-## Package directly on Linux
-
-Use a clean, committed application checkout on Linux x86_64 with uv and standard
-CPython 3.14.4. Obtain the approved Linux CPython 3.14 engine wheel and its trusted
-SHA256 from the engine release. Its version must match `engine-version.txt`.
+Both repositories use `/var/lib/arbitrage-engine/artifacts` by default. Set the same
+`ENGINE_ARTIFACT_ROOT` repository variable in both only if choosing another absolute
+path. `ENGINE_RELEASE_DIR` is obsolete. Create the shared directory once, as the engine
+runner user, with engine write access and application read access:
 
 ```bash
-export ENGINE_WHEEL=/absolute/path/nautilus_trader-2.0.0rc6-cp314-cp314-manylinux_2_39_x86_64.whl
-export ENGINE_SHA256=replace-with-the-approved-64-character-sha256
+sudo install -d -m 0755 -o "$(id -un)" /var/lib/arbitrage-engine/artifacts
+```
+
+Successful engine builds publish immutable wheels directly into this directory. Each
+package version includes the base version, increasing workflow run number, attempt, and
+full engine commit. The index contains wheel files, not engine.json or custom subdirectory
+indexes. Existing old manifest directories do not participate in uv resolution.
+Run the updated engine workflow once before building the application through this flow.
+
+The engine base version is declared as `nautilus-trader==2.0.0rc6` in the application's
+`python/pyproject.toml`. Updating the base version is a deliberate dependency change.
+New internal builds of that base version are selected automatically at the next application
+release with `uv lock --upgrade-package nautilus-trader`. uv checks compatibility using
+wheel tags. The Linux project requires CPython 3.14 and Linux x86_64 wheel availability;
+uv's native installation further checks the runner's platform and glibc compatibility.
+The engine is bound to an explicit local index, not allowed to fall back to public PyPI.
+
+## Local-runner workflows
+
+Both application workflows use `[self-hosted, linux, x64, monitoring-build]`.
+Builds run on pushes to `main` or manually. Deployment runs manually on `main` with a
+successful application build run ID. Wheel and archive uploads to GitHub are not used.
+
+A repository-level runner must be registered for the application too, in a separate
+installation/work directory on the same server, or both repositories must have access to
+an organization runner. The runner user needs read access to the shared wheel directory.
+Application build and deployment jobs must share local release storage. Assign the
+monitoring-build label only to that server unless matching runners share storage.
+Install gh, jq, ssh, and scp. Configure the application's monitoring-production environment
+with DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, and DEPLOY_KNOWN_HOSTS.
+
+The build generates `dist/project/pyproject.toml` from the application manifest, using
+Linux settings and the shared index. It seeds standard uv.lock from the development lock,
+updates the engine dependency, installs with `--frozen --no-build`, and tests the application.
+The actual release uv.lock is bundled as `uv.lock`. uv export emits exact runtime pins;
+uv pip compile --generate-hashes adds hashes, including local engine wheel hashes.
+The packaging step downloads only binary wheels with hash verification.
+
+Release archives remain under:
+
+```text
+<APP_RUNNER_TOOL_CACHE>/arbitrage-app/<OWNER>/<REPO>/releases/<APP_SHA>-<RUN_ID>-<ATTEMPT>
+```
+
+The manual deployment verifies a successful application run and the local archive, then
+uses the existing SSH installer. It never resolves a newer engine while deploying.
+The installed distribution version reveals the exact engine source commit.
+
+## Direct Linux packaging
+
+Use a clean committed application checkout on Linux x86_64 with uv 0.12.19 and standard
+CPython 3.14.4. The compatible engine wheel must already be in the shared directory:
+
+```bash
+export ENGINE_ARTIFACT_ROOT=/var/lib/arbitrage-engine/artifacts
 bash scripts/deploy/build-monitoring.bash
 ```
 
-The script verifies the engine hash and metadata, installs it in `python/.venv`, tests
-application code, and packages monitoring sources, the engine wheel, locked runtime
-wheels, application revision, and `ENGINE.json` into `dist/monitoring.tar.gz`.
-Use a clean release workspace instead of reusing previous wheels in `dist/`.
-No Cargo or maturin is invoked. Build a new wheel in the engine repository only when
-engine code or Python/platform compatibility changes.
+Use a clean release workspace with no previous dist directory. Windows migration wheels
+are development artifacts and are not published as Linux production dependencies.
 
-The local Windows migration snapshot cannot be deployed to Linux. Its compiled binary
-build revision is not independently known, so it is not an approved production release.
+## Installation and rollback
 
-## Install and roll back
-
-The existing installer, systemd service names, configuration paths, and Redis contracts
-are retained. The server requires Linux x86_64, standard CPython 3.14.4, uv, Redis, and
-the glibc version required by the engine wheel. Configure the account and notification
-credentials in `/etc/arbitrage-monitor/monitoring.env` on the server.
+The target needs Linux x86_64, CPython 3.14.4, uv, Redis, and the glibc required by the wheel.
+Configure account and notification credentials in /etc/arbitrage-monitor/monitoring.env.
+Existing systemd names, server paths, Redis contracts, and service rollback remain unchanged.
 
 ```bash
 sudo bash scripts/deploy/install-monitoring.bash /path/to/monitoring.tar.gz APP_COMMIT_SHA-RUN_ID
 ```
 
-The version is the application's full Git commit SHA followed by a numeric release ID.
-The installer verifies the archive revision, installs wheels offline before switching
-`/opt/arbitrage-monitor/current`, checks service startup, and attempts to restore the
-previous release on failure. Existing retained releases remain usable for rollback.
+The installer checks the application revision, installs all runtime wheels offline from
+hash-locked requirements, and checks imports before switching services. Startup failures
+attempt to restore the previous release. Retained release archives use their original
+locks and wheels. No runner registration, secrets, remote repository configuration, or
+server deployment was performed by this local code change.
 
-Workflow files are prepared locally. No remote repository, secrets, runner configuration,
-or server services were changed. Configure the new application repository and its runner
-before switching production releases. The engine checkout's
-old application files and pipeline remain as a transition backup. Develop application
-changes here. The dashboard remains a separate repository.
-
-## Local checks
+## Checks
 
 ```bash
+uv run --project python --frozen python -m pytest user_strategies examples/live/binance/portfolio_monitor scripts -q
 bash -n scripts/deploy/build-monitoring.bash
-bash -n scripts/deploy/install-monitoring.bash
 bash scripts/deploy/test-monitoring-deploy.bash
 ```
 
-Deployment tests use temporary directories and fake tools. They check configuration,
-release switching, rollback, revision mismatch, and rejection of trading workers.
-They do not deploy, access trading accounts, or send notifications.
+Deployment tests use isolated directories and fake system tools; they do not install
+services, access trading accounts, or send notifications.

@@ -1,13 +1,15 @@
 # Application development
 
-This repository contains trading application code, not NautilusTrader engine source.
-Use `python/.venv` with `uv run --project python --no-sync` from the repository root.
-Install the engine from a prebuilt wheel matching `engine-version.txt`, the operating
-system, and Python version. Never build or install the engine from a source checkout
-as part of application development or release packaging.
+This repository contains application code, not NautilusTrader engine source.
+Use the uv-managed `python/.venv` from the repository root. The Windows development
+project uses `engine-wheels/`; Linux release configuration is generated from that same
+dependency declaration with the runner's flat index. Let uv resolve, lock, and install
+the engine. Never compile the engine as part of application builds. Engine wheel
+versions must identify their full source commit. Publish releases with their uv.lock
+and uv-generated hashed requirements; offline installation must require hashes.
 
 Preserve exact prices, quantities, fees, and money with domain types or Decimal.
 Run relevant tests after changes. Do not start live trading, send notifications,
 commit, push, create remote repositories, or deploy without explicit user authorization.
-Keep credentials, wheel binaries, environments, logs, and release archives out of Git.
-Preserve the `user_strategies` module paths and Redis contracts during migration.
+Keep credentials, binary wheels, environments, logs, and release archives out of Git.
+Preserve user_strategies module paths and Redis contracts during migration.

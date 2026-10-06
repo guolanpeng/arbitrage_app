@@ -41,15 +41,16 @@ tar --no-same-owner --no-same-permissions -xzf "$archive" -C "$release"
   exit 2
 }
 uv venv --python python3.14 "$release/python/.venv"
-uv pip install --python "$release/python/.venv/bin/python" --no-index \
-  --find-links "$release/wheelhouse" -r "$release/monitoring-requirements.lock" \
-  "$release"/wheelhouse/nautilus_trader-*.whl
+uv pip install --python "$release/python/.venv/bin/python" --no-index --require-hashes \
+  --find-links "$release/wheelhouse" -r "$release/monitoring-requirements.lock"
 id arbitrage-monitor > /dev/null 2>&1 ||
   useradd --system --home-dir /var/lib/arbitrage-monitor --shell /usr/sbin/nologin arbitrage-monitor
 (
   cd "$release"
   runuser -u arbitrage-monitor -- python/.venv/bin/python \
     -c 'import nautilus_trader, httpx, redis, lark_oapi'
+  runuser -u arbitrage-monitor -- python/.venv/bin/python \
+    -c 'import importlib.metadata as m; print("Installed engine:", m.version("nautilus-trader"))'
   runuser -u arbitrage-monitor -- python/.venv/bin/python \
     examples/live/binance/portfolio_monitor/monitor.py --help
 )

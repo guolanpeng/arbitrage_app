@@ -7,11 +7,6 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
-    inputs:
-      engine_release_dir:
-        description: Absolute saved engine release directory on this runner (blank uses repository variable)
-        required: false
-        type: string
 
 concurrency:
   group: monitoring-build-${{ github.ref }}
@@ -41,19 +36,9 @@ jobs:
             python/uv.lock
             python/pyproject.toml
 
-      - name: Reuse engine release stored on runner
+      - name: Resolve engine dependency, test and package application
         env:
-          ENGINE_RELEASE_DIR: ${{ inputs.engine_release_dir || vars.ENGINE_RELEASE_DIR }}
-        run: |
-          [[ -n "$ENGINE_RELEASE_DIR" && "$ENGINE_RELEASE_DIR" == /* ]] || {
-            echo "Set ENGINE_RELEASE_DIR to an absolute saved engine release directory" >&2
-            exit 2
-          }
-          python scripts/prepare-engine.py --release-dir "$ENGINE_RELEASE_DIR" \
-            --output "$RUNNER_TEMP/arbitrage-engine-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
-            --github-env "$GITHUB_ENV"
-
-      - name: Test and package application without compiling engine
+          ENGINE_ARTIFACT_ROOT: ${{ vars.ENGINE_ARTIFACT_ROOT || '/var/lib/arbitrage-engine/artifacts' }}
         run: bash scripts/deploy/build-monitoring.bash
 
       - name: Save tested application release on runner
