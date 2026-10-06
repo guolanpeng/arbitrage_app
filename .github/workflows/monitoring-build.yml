@@ -31,10 +31,7 @@ jobs:
         uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: "0.12.19"
-          enable-cache: true
-          cache-dependency-glob: |
-            python/uv.lock
-            python/pyproject.toml
+          enable-cache: false
 
       - name: Resolve engine dependency, test and package application
         env:

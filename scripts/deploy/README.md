@@ -34,6 +34,8 @@ The engine is bound to an explicit local index, not allowed to fall back to publ
 Both application workflows use `[self-hosted, linux, x64, monitoring-build]`.
 Builds run on pushes to `main` or manually. Deployment runs manually on `main` with a
 successful application build run ID. Wheel and archive uploads to GitHub are not used.
+uv reuses the runner's local dependency cache; GitHub dependency cache uploads and downloads
+are disabled. Missing dependencies are still fetched from their configured package sources.
 
 A repository-level runner must be registered for the application too, in a separate
 installation/work directory on the same server, or both repositories must have access to
