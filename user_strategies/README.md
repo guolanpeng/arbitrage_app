@@ -259,7 +259,7 @@ execution strategy in `basis_watch.py`.
 ## REST collector
 
 `market_data.py` collects public **USDT spot** and **USDT-margined perpetual** snapshots from
-Binance, Gate, Bybit, Bitget, OKX, and Aster. It does not place orders or host a web page. The collector
+Binance, Gate, Bybit, Bitget, and OKX. It does not place orders or host a web page. The collector
 polls exchange REST APIs every 15 seconds by default; it is a dashboard data source, not a
 low-latency trading feed.
 
@@ -275,7 +275,7 @@ expiry. For a Redis server on another machine, set `MARKET_REDIS_URL` to that se
 credentials. Run one collector instance per Redis namespace; concurrent instances would overwrite
 the same snapshot keys.
 
-The collector writes 18 JSON keys (six venues × three data categories):
+The collector writes 15 JSON keys (five venues × three data categories):
 
 ```
 market:v1:{venue}:spot
@@ -314,10 +314,7 @@ The `funding` category uses `rate` as a decimal ratio (for example `0.0001` mean
 `next_funding_at_ms`, `interval_hours`, and `source_at_ms`. A missing field is `null` rather than
 an assumed value. Binance uses the official 8-hour default and overrides it with each symbol's
 current `fundingIntervalHours` from `/fapi/v1/fundingInfo` when provided. OKX's interval is
-calculated from its next two settlement times. Aster uses public V3 endpoints, joins spot and
-perpetual book tickers with 24-hour statistics, and reads funding intervals from `/fapi/v3/fundingInfo`
-without assuming a default. Only trading USDT spot pairs and USDT-margined perpetuals listed by
-`exchangeInfo` are included; internal `TEST` symbols are excluded. Its venue identifier is `aster`.
+calculated from its next two settlement times.
 For
 OKX perpetuals, `quote_turnover_24h` is `null`: its ticker reports base-currency volume, not
 quote-currency turnover. Bid/ask sizes retain each venue's native units; perpetual contract sizes
@@ -325,7 +322,7 @@ must not be compared with spot base-asset quantities without checking contract s
 Some exchanges do not provide an exchange-side timestamp on a bulk
 ticker; use `collected_at_ms` and the key TTL to check freshness.
 
-The independent web application can read these 18 keys with `MGET` and join them by instrument.
+The independent web application can read these 15 keys with `MGET` and join them by instrument.
 Missing keys mean no fresh snapshot is available. Keep this Redis connection on the **web server**,
 not in browser JavaScript. Matching a symbol across venues does not prove the underlying token or
 contract terms are identical; validate asset identity and contract specifications before using

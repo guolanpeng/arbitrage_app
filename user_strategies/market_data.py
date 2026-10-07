@@ -13,7 +13,7 @@ import httpx
 from redis.asyncio import Redis
 
 LOG = logging.getLogger(__name__)
-VENUES = ("binance", "gate", "bybit", "bitget", "okx", "aster")
+VENUES = ("binance", "gate", "bybit", "bitget", "okx")
 
 
 def _millis(value: Any, *, seconds: bool = False) -> int | None:
@@ -418,94 +418,12 @@ async def _okx(client: httpx.AsyncClient) -> tuple[dict, dict, dict]:
     )
 
 
-async def _aster(client: httpx.AsyncClient) -> tuple[dict, dict, dict]:
-    (
-        spot_info,
-        spot_rows,
-        spot_books,
-        perp_info,
-        perp_rows,
-        perp_books,
-        funding_rows,
-        funding_info,
-    ) = await asyncio.gather(
-        _get(client, "https://sapi.asterdex.com/api/v3/exchangeInfo"),
-        _get(client, "https://sapi.asterdex.com/api/v3/ticker/24hr"),
-        _get(client, "https://sapi.asterdex.com/api/v3/ticker/bookTicker"),
-        _get(client, "https://fapi.asterdex.com/fapi/v3/exchangeInfo"),
-        _get(client, "https://fapi.asterdex.com/fapi/v3/ticker/24hr"),
-        _get(client, "https://fapi.asterdex.com/fapi/v3/ticker/bookTicker"),
-        _get(client, "https://fapi.asterdex.com/fapi/v3/premiumIndex"),
-        _get(client, "https://fapi.asterdex.com/fapi/v3/fundingInfo"),
-    )
-    spot: dict[str, Any] = {}
-    perp: dict[str, Any] = {}
-    funding: dict[str, Any] = {}
-    for info, rows, book_rows, target in (
-        (spot_info, spot_rows, spot_books, spot),
-        (perp_info, perp_rows, perp_books, perp),
-    ):
-        symbols = {
-            row["symbol"]
-            for row in info["symbols"]
-            if row.get("status") == "TRADING"
-            and row.get("quoteAsset") == "USDT"
-            and not row["symbol"].startswith("TEST")
-            and (
-                target is spot
-                or (
-                    row.get("contractType") == "PERPETUAL"
-                    and row.get("marginAsset") == "USDT"
-                )
-            )
-        }
-        tickers = {row["symbol"]: row for row in rows}
-        for book in book_rows:
-            symbol = book["symbol"]
-            if symbol not in symbols:
-                continue
-            row = tickers.get(symbol, {})
-            _add(
-                target,
-                _quote(
-                    symbol,
-                    book.get("bidPrice"),
-                    book.get("askPrice"),
-                    book.get("bidQty"),
-                    book.get("askQty"),
-                    row.get("lastPrice"),
-                    row.get("quoteVolume"),
-                    book.get("time"),
-                ),
-            )
-    funding_intervals = {
-        row["symbol"]: row.get("fundingIntervalHours") for row in funding_info
-    }
-    for row in funding_rows:
-        _add(
-            funding,
-            _funding(
-                row["symbol"],
-                row.get("lastFundingRate"),
-                row.get("nextFundingTime"),
-                funding_intervals.get(row["symbol"]),
-                row.get("time"),
-            ),
-        )
-    return (
-        spot,
-        perp,
-        {symbol: value for symbol, value in funding.items() if symbol in perp},
-    )
-
-
 COLLECTORS = {
     "binance": _binance,
     "gate": _gate,
     "bybit": _bybit,
     "bitget": _bitget,
     "okx": _okx,
-    "aster": _aster,
 }
 
 

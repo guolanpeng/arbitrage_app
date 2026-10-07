@@ -209,108 +209,17 @@ class MarketDataTests(unittest.IsolatedAsyncioTestCase):
             market_data.COLLECTORS, dict.fromkeys(market_data.VENUES, collector)
         ):
             successful = await market_data.collect_once(None, redis, 60)
-        self.assertEqual(successful, 6)
-        self.assertEqual(len(redis.pipelines), 6)
-        self.assertEqual(sum(len(p.commands) for p in redis.pipelines), 18)
+        self.assertEqual(successful, 5)
+        self.assertEqual(len(redis.pipelines), 5)
+        self.assertEqual(sum(len(p.commands) for p in redis.pipelines), 15)
         key, value, expiry = redis.pipelines[0].commands[0]
         self.assertEqual(key, "market:v1:binance:spot")
         self.assertEqual(expiry, 60)
         self.assertEqual(json.loads(value)["schema_version"], 1)
         self.assertEqual(
             [command[0] for command in redis.pipelines[-1].commands],
-            [f"market:v1:aster:{market}" for market in ("spot", "perp", "funding")],
+            [f"market:v1:okx:{market}" for market in ("spot", "perp", "funding")],
         )
-
-    async def test_aster_joins_books_and_filters_ineligible_instruments(self) -> None:
-        instrument = {
-            "symbol": "BTCUSDT",
-            "status": "TRADING",
-            "quoteAsset": "USDT",
-            "marginAsset": "USDT",
-            "contractType": "PERPETUAL",
-        }
-        symbols = [
-            instrument,
-            {**instrument, "symbol": "ETHUSDT"},
-            {**instrument, "symbol": "TESTUSDT"},
-            {**instrument, "symbol": "CLOSEDUSDT", "status": "CLOSE"},
-            {**instrument, "symbol": "BTCUSD1", "quoteAsset": "USD1"},
-            {**instrument, "symbol": "DELIVERYUSDT", "contractType": "CURRENT_QUARTER"},
-            {**instrument, "symbol": "COINUSDT", "marginAsset": "BTC"},
-        ]
-        book = {
-            "symbol": "BTCUSDT",
-            "bidPrice": "0.00000001",
-            "askPrice": "0.00000002",
-            "bidQty": "12.34567890",
-            "askQty": "98.76543210",
-            "time": 1_790_000_000_000,
-        }
-        books = [{**book, "symbol": row["symbol"]} for row in symbols] + [
-            {**book, "symbol": "BTC_UP_DOWN_5M_123_YUSDT"}
-        ]
-        tickers = [
-            {
-                "symbol": row["symbol"],
-                "lastPrice": "0.000000015",
-                "quoteVolume": "123.456789",
-            }
-            for row in books
-            if row["symbol"] != "ETHUSDT"
-        ]
-        rates = [
-            {
-                "symbol": row["symbol"],
-                "lastFundingRate": "-0.00012345",
-                "nextFundingTime": 1_790_014_400_000,
-                "time": 1_790_000_000_001,
-            }
-            for row in books
-        ]
-        responses = {
-            "https://sapi.asterdex.com/api/v3/exchangeInfo": {"symbols": symbols[:5]},
-            "https://sapi.asterdex.com/api/v3/ticker/24hr": tickers,
-            "https://sapi.asterdex.com/api/v3/ticker/bookTicker": books,
-            "https://fapi.asterdex.com/fapi/v3/exchangeInfo": {"symbols": symbols},
-            "https://fapi.asterdex.com/fapi/v3/ticker/24hr": tickers,
-            "https://fapi.asterdex.com/fapi/v3/ticker/bookTicker": books,
-            "https://fapi.asterdex.com/fapi/v3/premiumIndex": rates,
-            "https://fapi.asterdex.com/fapi/v3/fundingInfo": [
-                {"symbol": "BTCUSDT", "fundingIntervalHours": 4}
-            ],
-        }
-        requested: set[str] = set()
-
-        def handler(request: httpx.Request) -> httpx.Response:
-            url = str(request.url)
-            requested.add(url)
-            return httpx.Response(200, json=responses[url])
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            spot, perp, funding = await market_data._aster(client)
-        self.assertEqual(requested, set(responses))
-        for quotes in (spot, perp):
-            self.assertEqual(set(quotes), {"BTCUSDT", "ETHUSDT"})
-            self.assertEqual(quotes["BTCUSDT"]["bid"], "0.00000001")
-            self.assertEqual(quotes["BTCUSDT"]["ask_size"], "98.76543210")
-            self.assertEqual(quotes["BTCUSDT"]["last"], "0.000000015")
-            self.assertEqual(quotes["BTCUSDT"]["quote_turnover_24h"], "123.456789")
-            self.assertEqual(quotes["BTCUSDT"]["source_at_ms"], book["time"])
-            self.assertIsNone(quotes["ETHUSDT"]["last"])
-        self.assertEqual(set(funding), set(perp))
-        self.assertEqual(funding["BTCUSDT"]["rate"], "-0.00012345")
-        self.assertEqual(funding["BTCUSDT"]["interval_hours"], "4")
-        self.assertEqual(funding["BTCUSDT"]["next_funding_at_ms"], 1_790_014_400_000)
-        self.assertEqual(funding["BTCUSDT"]["source_at_ms"], 1_790_000_000_001)
-        self.assertIsNone(funding["ETHUSDT"]["interval_hours"])
-
-    async def test_aster_propagates_api_failure(self) -> None:
-        def handler(request: httpx.Request) -> httpx.Response:
-            return httpx.Response(503)
-
-        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-            with self.assertRaises(httpx.HTTPStatusError):
-                await market_data._aster(client)
 
     async def test_failed_collectors_report_exception_type_and_return_zero(
         self,

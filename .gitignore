@@ -8,4 +8,7 @@ python/.venv/
 engine-wheels/
 dist/
 logs/
+data/prediction/catalogs/
+data/prediction/paper/
+data/prediction/live/
 *.log
